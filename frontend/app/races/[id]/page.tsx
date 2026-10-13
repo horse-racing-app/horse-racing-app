@@ -8,7 +8,6 @@ type PredictionData = { marks: { [key: number]: string }; bets: { type: string; 
 type PayoutItem = { pattern: string; payout: string };
 type RaceResults = { [key: string]: PayoutItem[] };
 
-// 実際の処理を行う中身のコンポーネント
 function RaceDetailContent() {
   const params = useParams();
   const router = useRouter();
@@ -24,12 +23,13 @@ function RaceDetailContent() {
   const [isFetchingResult, setIsFetchingResult] = useState(false);
 
   const hasFetchedPredictions = useRef(false);
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8080";
 
   const fetchPredictions = async (targetId: string, isForce = false) => {
     setIsPredicting(true);
     try {
       const forceParam = isForce ? "?force=true" : "";
-      const res = await fetch(`http://127.0.0.1:8080/api/races/${targetId}/predictions${forceParam}`);
+      const res = await fetch(`${API_BASE}/api/races/${targetId}/predictions${forceParam}`);
       const data = await res.json();
       setPredictions(data);
     } catch (error) {
@@ -42,7 +42,7 @@ function RaceDetailContent() {
     if (!raceId) return;
     setIsFetchingResult(true);
     try {
-      const res = await fetch(`http://127.0.0.1:8080/api/races/${raceId}/results`, { method: "POST" });
+      const res = await fetch(`${API_BASE}/api/races/${raceId}/results`, { method: "POST" });
       const data = await res.json();
       if (data.status === "success") {
         setRaceResults(data.data);
@@ -60,9 +60,9 @@ function RaceDetailContent() {
     if (!raceId) return;
 
     Promise.all([
-      fetch(`http://127.0.0.1:8080/api/races/${raceId}`).then((res) => res.json()),
-      fetch(`http://127.0.0.1:8080/api/races/${raceId}/entries`).then((res) => res.json()),
-      fetch(`http://127.0.0.1:8080/api/races/${raceId}/results`).then((res) => res.json())
+      fetch(`${API_BASE}/api/races/${raceId}`).then((res) => res.json()),
+      fetch(`${API_BASE}/api/races/${raceId}/entries`).then((res) => res.json()),
+      fetch(`${API_BASE}/api/races/${raceId}/results`).then((res) => res.json())
     ]).then(([raceData, entriesData, resultsData]) => {
         setRace(raceData);
         setEntries(entriesData);
@@ -90,43 +90,44 @@ function RaceDetailContent() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
+    <div className="min-h-screen bg-gray-50 p-4 sm:p-8">
       <main className="max-w-5xl mx-auto">
-        <div className="mb-6 flex justify-between items-end flex-wrap gap-4">
-          <button onClick={() => router.back()} className="text-blue-600 font-bold hover:underline">
+        <div className="mb-4 sm:mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
+          <button onClick={() => router.back()} className="text-blue-600 font-bold hover:underline py-2">
             ← 一覧に戻る
           </button>
           
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
             <button 
               onClick={handleSyncResults} 
               disabled={isFetchingResult || isLoading}
-              className="bg-green-600 text-white px-5 py-2 rounded font-bold shadow hover:bg-green-700 disabled:bg-gray-400"
+              className="bg-green-600 text-white px-5 py-3 sm:py-2 rounded font-bold shadow hover:bg-green-700 disabled:bg-gray-400 w-full sm:w-auto text-sm sm:text-base"
             >
               {isFetchingResult ? "結果を取得中..." : "🏁 レース結果を取得"}
             </button>
             <button 
               onClick={() => raceId && fetchPredictions(raceId, true)} 
               disabled={isPredicting || isLoading}
-              className="bg-blue-600 text-white px-5 py-2 rounded font-bold shadow hover:bg-blue-700 disabled:bg-gray-400"
+              className="bg-blue-600 text-white px-5 py-3 sm:py-2 rounded font-bold shadow hover:bg-blue-700 disabled:bg-gray-400 w-full sm:w-auto text-sm sm:text-base"
             >
-              {isPredicting ? "予想を生成中..." : "🔄 AIで予想を再生成"}
+              {isPredicting ? "予想生成中..." : "🔄 AIで予想を再生成"}
             </button>
           </div>
         </div>
 
-        <div className="flex items-center gap-4 mb-4">
-          <h1 className="text-3xl font-bold text-gray-900">出馬表・AI予想</h1>
-          {predictions?.source === "AI" && <span className="bg-blue-100 text-blue-800 border border-blue-300 text-sm font-bold px-3 py-1 rounded-full">✨ AI予想 (Gemini)</span>}
-          {predictions?.source === "Rule-based" && <span className="bg-orange-100 text-orange-800 border border-orange-300 text-sm font-bold px-3 py-1 rounded-full">⚙️ 独自ロジック (API制限中)</span>}
+        <div className="flex flex-wrap items-center gap-3 mb-4">
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">出馬表・AI予想</h1>
+          {predictions?.source === "AI" && <span className="bg-blue-100 text-blue-800 border border-blue-300 text-xs sm:text-sm font-bold px-3 py-1 rounded-full whitespace-nowrap">✨ AI予想</span>}
+          {predictions?.source === "Rule-based" && <span className="bg-orange-100 text-orange-800 border border-orange-300 text-xs sm:text-sm font-bold px-3 py-1 rounded-full whitespace-nowrap">⚙️ 独自ロジック</span>}
         </div>
 
         {race && (
           <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200 shadow-sm">
-            <h2 className="text-2xl font-bold text-gray-900 mb-1">
-              {race.course} {race.race_number}R <span className="ml-3 text-xl font-normal text-gray-800">{race.name}</span>
+            <h2 className="text-xl sm:text-2xl font-bold text-gray-900 mb-1 flex items-baseline flex-wrap gap-2">
+              <span>{race.course} {race.race_number}R</span>
+              <span className="text-lg sm:text-xl font-normal text-gray-800">{race.name}</span>
             </h2>
-            <p className="text-gray-700 font-medium">{race.date} | {race.distance}m | 馬場: {race.condition}</p>
+            <p className="text-sm sm:text-base text-gray-700 font-medium">{race.date} | {race.distance}m | 馬場: {race.condition}</p>
           </div>
         )}
 
@@ -135,43 +136,47 @@ function RaceDetailContent() {
         ) : (
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             <div className="xl:col-span-2 bg-white rounded-lg shadow overflow-hidden">
-              <div className="bg-gray-800 text-white p-4"><h2 className="font-bold text-lg">出馬表</h2></div>
-              <table className="w-full text-left border-collapse bg-white">
-                <thead>
-                  <tr className="bg-gray-100 text-gray-900 text-sm border-b-2 border-gray-300">
-                    <th className="p-3 text-center font-bold">予想</th>
-                    <th className="p-3 font-bold">馬番</th>
-                    <th className="p-3 font-bold">馬名</th>
-                    <th className="p-3 font-bold">性齢</th>
-                    <th className="p-3 font-bold">斤量</th>
-                    <th className="p-3 font-bold">騎手</th>
-                    <th className="p-3 font-bold">厩舎</th>
-                    <th className="p-3 font-bold">オッズ</th>
-                    <th className="p-3 font-bold">近走成績 (過去3走)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {entries.map((entry) => (
-                    <tr key={entry.id} className="hover:bg-blue-50 border-b border-gray-200">
-                      <td className="p-3 text-center text-red-600 font-bold text-xl">{predictions?.marks[entry.horse_number] || ""}</td>
-                      <td className="p-3 font-bold text-gray-900 text-lg">{entry.horse_number}</td>
-                      <td className="p-3 font-bold text-gray-900 text-base">{entry.horse_name}</td>
-                      <td className="p-3 text-sm text-gray-600 font-medium">{entry.sex_age}</td>
-                      <td className="p-3 text-sm text-gray-600 font-medium">{entry.weight}</td>
-                      <td className="p-3 text-sm text-gray-900 font-medium">{entry.jockey}</td>
-                      <td className="p-3 text-sm text-gray-600 font-medium">{entry.trainer}</td>
-                      <td className="p-3 text-right text-sm text-gray-900 font-bold">{entry.odds.toFixed(1)}</td>
-                      <td className="p-2 text-xs text-gray-500 max-w-[200px] truncate" title={entry.past_performance}>{entry.past_performance || "-"}</td>
+              <div className="bg-gray-800 text-white p-3 sm:p-4"><h2 className="font-bold text-base sm:text-lg">出馬表</h2></div>
+              
+              {/* ★ テーブルを横スクロール可能にするラッパー */}
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[800px] text-left border-collapse bg-white">
+                  <thead>
+                    <tr className="bg-gray-100 text-gray-900 text-sm border-b-2 border-gray-300">
+                      <th className="p-3 text-center font-bold whitespace-nowrap">予想</th>
+                      <th className="p-3 font-bold whitespace-nowrap">馬番</th>
+                      <th className="p-3 font-bold whitespace-nowrap">馬名</th>
+                      <th className="p-3 font-bold whitespace-nowrap">性齢</th>
+                      <th className="p-3 font-bold whitespace-nowrap">斤量</th>
+                      <th className="p-3 font-bold whitespace-nowrap">騎手</th>
+                      <th className="p-3 font-bold whitespace-nowrap">厩舎</th>
+                      <th className="p-3 font-bold whitespace-nowrap">オッズ</th>
+                      <th className="p-3 font-bold whitespace-nowrap">近走成績 (過去3走)</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {entries.map((entry) => (
+                      <tr key={entry.id} className="hover:bg-blue-50 border-b border-gray-200">
+                        <td className="p-3 text-center text-red-600 font-bold text-xl whitespace-nowrap">{predictions?.marks[entry.horse_number] || ""}</td>
+                        <td className="p-3 font-bold text-gray-900 text-lg whitespace-nowrap">{entry.horse_number}</td>
+                        <td className="p-3 font-bold text-gray-900 text-base whitespace-nowrap">{entry.horse_name}</td>
+                        <td className="p-3 text-sm text-gray-600 font-medium whitespace-nowrap">{entry.sex_age}</td>
+                        <td className="p-3 text-sm text-gray-600 font-medium whitespace-nowrap">{entry.weight}</td>
+                        <td className="p-3 text-sm text-gray-900 font-medium whitespace-nowrap">{entry.jockey}</td>
+                        <td className="p-3 text-sm text-gray-600 font-medium whitespace-nowrap">{entry.trainer}</td>
+                        <td className="p-3 text-right text-sm text-gray-900 font-bold whitespace-nowrap">{entry.odds.toFixed(1)}</td>
+                        <td className="p-3 text-xs text-gray-500 max-w-[250px] truncate" title={entry.past_performance}>{entry.past_performance || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
             <div className="flex flex-col gap-6">
               <div className="bg-white rounded-lg shadow overflow-hidden h-fit">
-                <div className="bg-green-700 text-white p-4"><h2 className="font-bold text-lg">推奨買い目</h2></div>
-                <div className="p-4 bg-white">
+                <div className="bg-green-700 text-white p-3 sm:p-4"><h2 className="font-bold text-base sm:text-lg">推奨買い目</h2></div>
+                <div className="p-3 sm:p-4 bg-white">
                   {!predictions ? (
                     <p className="text-gray-600 text-sm font-medium">{isPredicting ? "予想生成中..." : "予想データがありません"}</p>
                   ) : predictions.bets && predictions.bets.length > 0 ? (
@@ -182,17 +187,17 @@ function RaceDetailContent() {
                           <li key={index} className="flex justify-between items-center border-b border-gray-200 pb-2">
                             <div className="flex items-center">
                               <span className="inline-block bg-gray-200 text-gray-900 font-bold text-xs px-2 py-1 rounded mr-2">{bet.type}</span>
-                              <span className="font-bold text-lg text-gray-900 tracking-widest">{bet.pattern}</span>
+                              <span className="font-bold text-base sm:text-lg text-gray-900 tracking-widest">{bet.pattern}</span>
                             </div>
-                            <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-2 sm:gap-3">
                               {hitPayout ? (
-                                <span className="text-red-600 font-bold bg-red-100 px-2 py-1 rounded text-sm shadow-sm border border-red-200">
-                                  🎯 的中! {hitPayout}
+                                <span className="text-red-600 font-bold bg-red-100 px-2 py-1 rounded text-xs sm:text-sm shadow-sm border border-red-200 whitespace-nowrap">
+                                  🎯 {hitPayout}円
                                 </span>
                               ) : raceResults ? (
-                                <span className="text-gray-400 text-sm font-bold">✖ ハズレ</span>
+                                <span className="text-gray-400 text-xs sm:text-sm font-bold whitespace-nowrap">✖ ハズレ</span>
                               ) : null}
-                              <span className={`font-bold text-lg ${bet.level === 'A' ? 'text-red-600' : 'text-blue-600'}`}>{bet.level}</span>
+                              <span className={`font-bold text-base sm:text-lg ${bet.level === 'A' ? 'text-red-600' : 'text-blue-600'}`}>{bet.level}</span>
                             </div>
                           </li>
                         );
@@ -207,18 +212,18 @@ function RaceDetailContent() {
               {raceResults && (
                 <div className="bg-white rounded-lg shadow overflow-hidden h-fit border border-gray-200">
                   <div className="bg-gray-200 text-gray-900 p-3 border-b border-gray-300">
-                    <h2 className="font-bold text-md">🏁 実際のレース配当</h2>
+                    <h2 className="font-bold text-sm sm:text-md">🏁 実際のレース配当</h2>
                   </div>
-                  <div className="p-3 text-sm">
+                  <div className="p-3 text-xs sm:text-sm">
                     {["単勝", "馬連", "ワイド", "3連複", "3連単"].map(type => (
                       raceResults[type] && (
                         <div key={type} className="flex border-b border-gray-100 py-2 last:border-0">
-                          <span className="w-16 font-bold text-gray-700">{type}</span>
+                          <span className="w-12 sm:w-16 font-bold text-gray-700 flex-shrink-0">{type}</span>
                           <div className="flex-1">
                             {raceResults[type].map((item, i) => (
-                              <div key={i} className="flex justify-between mb-1 last:mb-0">
-                                <span className="text-gray-900 font-bold tracking-widest">{item.pattern}</span>
-                                <span className="text-gray-900">{item.payout}</span>
+                              <div key={i} className="flex justify-between mb-1 last:mb-0 gap-2">
+                                <span className="text-gray-900 font-bold tracking-widest break-all">{item.pattern}</span>
+                                <span className="text-gray-900 whitespace-nowrap">{item.payout}円</span>
                               </div>
                             ))}
                           </div>
@@ -236,7 +241,6 @@ function RaceDetailContent() {
   );
 }
 
-// ★ 追加：全体のコンポーネントを Suspense で包んで Next.js の事前レンダリングエラーを回避
 export default function RaceDetail() {
   return (
     <Suspense fallback={
