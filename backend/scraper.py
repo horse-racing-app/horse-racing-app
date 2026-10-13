@@ -8,14 +8,14 @@ from database import SessionLocal, Race, RaceEntry
 
 def fetch_and_save_races(target_url: str):
     db = SessionLocal()
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
     target_url = target_url.replace("/result.html", "/shutuba.html")
 
     try:
         response = requests.get(target_url, headers=headers, timeout=10)
-        # サイトの文字コードを自動判別して取得（文字化け完全防止）
-        soup = BeautifulSoup(response.content, "html.parser", from_encoding=response.apparent_encoding)
+        # ★修正：文字コード指定を一切やめ、生データ(content)を直接渡してBS4に完璧な自動判別をさせる
+        soup = BeautifulSoup(response.content, "html.parser")
 
         netkeiba_id = None
         id_match = re.search(r'race_id=(\d+)', target_url)
@@ -142,13 +142,13 @@ def fetch_and_save_races(target_url: str):
             past_url = target_url.replace("/shutuba.html", "/shutuba_past.html")
             try:
                 p_res = requests.get(past_url, headers=headers, timeout=10)
-                p_soup = BeautifulSoup(p_res.content, "html.parser", from_encoding=p_res.apparent_encoding)
+                # ★修正：content渡しに変更
+                p_soup = BeautifulSoup(p_res.content, "html.parser")
                 
                 for row in p_soup.find_all("tr"):
                     tds = row.find_all(["td", "th"])
                     if not tds: continue
                     
-                    # 行内の最初のほうにある数字を馬番とする
                     h_num = 0
                     for td in tds[:3]:
                         txt = td.text.strip()
@@ -160,8 +160,6 @@ def fetch_and_save_races(target_url: str):
                         past_texts = []
                         for td in tds:
                             clean_text = re.sub(r'\s+', ' ', td.text).strip()
-                            
-                            # ★最大のバグ修正: 「26.10.12」のように【年が2桁】のパターンでも確実に検知できるように変更
                             if re.search(r'\d{2,4}[\./]\d{1,2}[\./]\d{1,2}', clean_text):
                                 past_texts.append(clean_text[:40]) 
                                 
@@ -170,24 +168,22 @@ def fetch_and_save_races(target_url: str):
             except Exception as e:
                 print("過去ページ一括取得エラー:", e)
 
-        # 一括で取れなかった馬のみ個別アクセス（保険）
         for entry in entries_to_add:
             if entry.horse_number in past_data_map:
                 entry.past_performance = past_data_map[entry.horse_number]
             elif hasattr(entry, '_horse_url') and entry._horse_url:
                 try:
                     h_res = requests.get(entry._horse_url, headers=headers, timeout=10)
-                    h_res.encoding = "euc-jp"
-                    h_soup = BeautifulSoup(h_res.text, "html.parser")
+                    # ★修正：content渡しに変更
+                    h_soup = BeautifulSoup(h_res.content, "html.parser")
                     
                     past_texts = []
-                    # どんなテーブル構造でも、一番左が日付（YYYY/MM/DD）の行をレース結果とみなす最強抽出
                     for tr in h_soup.find_all("tr"):
                         tds = tr.find_all("td")
                         if len(tds) >= 10:
                             date_txt = tds[0].text.strip()
                             if re.match(r'^\d{4}/\d{1,2}/\d{1,2}$', date_txt):
-                                p_date = re.sub(r'^\d{4}/', '', date_txt) # 年を消して短く
+                                p_date = re.sub(r'^\d{4}/', '', date_txt) 
                                 p_name = tds[4].text.strip()
                                 p_pop = tds[10].text.strip()
                                 p_rank = tds[11].text.strip()
@@ -227,10 +223,10 @@ def fetch_and_save_result(race_id: int):
         result_url = f"https://nar.netkeiba.com/race/result.html?race_id={race.netkeiba_id}"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         response = requests.get(result_url, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.content, "html.parser", from_encoding=response.apparent_encoding)
+        # ★修正：content渡しに変更
+        soup = BeautifulSoup(response.content, "html.parser")
 
         payouts = {}
-        # 結果の配当テーブル（Pay_Table_C）内の行だけを探すようにロックオン
         pay_table = soup.find("table", class_=re.compile(r"Pay_Table_C|Payout", re.I))
         rows = pay_table.find_all("tr") if pay_table else soup.find_all("tr")
 
@@ -242,18 +238,15 @@ def fetch_and_save_result(race_id: int):
             if type_name in ["単勝", "馬連", "ワイド", "3連複", "3連単"]:
                 tds = tr.find_all("td")
                 if len(tds) >= 2:
-                    # ★修正：<br>や<li>ごとに区切って文字をバラバラに取り出す（ワイド等の複数行対策）
                     nums = [re.sub(r'\D+', '-', s).strip('-') for s in tds[0].stripped_strings]
                     moneys = [re.sub(r'[^\d,円]', '', s) for s in tds[1].stripped_strings]
                     
-                    # 空っぽの文字を削除
                     nums = [n for n in nums if n]
                     moneys = [m for m in moneys if m]
                     
                     if type_name not in payouts:
                         payouts[type_name] = []
                     
-                    # 馬番と金額を順番にペアにして保存する
                     for n, m in zip(nums, moneys):
                         payouts[type_name].append({"pattern": n, "payout": m})
 
