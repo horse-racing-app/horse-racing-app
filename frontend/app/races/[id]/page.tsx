@@ -138,7 +138,6 @@ function RaceDetailContent() {
             <div className="xl:col-span-3 bg-white rounded-lg shadow overflow-hidden">
               <div className="bg-gray-800 text-white p-4"><h2 className="font-bold text-lg">出馬表</h2></div>
               
-              {/* テーブルを強制的に広くし、はみ出た部分は横スクロールさせる */}
               <div className="overflow-x-auto w-full">
                 <table className="w-full text-left border-collapse bg-white">
                   <thead>
@@ -186,18 +185,19 @@ function RaceDetailContent() {
                       {predictions.bets.map((bet, index) => {
                         const hitPayout = checkHit(bet); 
                         return (
-                          <li key={index} className="flex flex-col border-b border-gray-200 pb-2">
-                            <div className="flex justify-between items-center mb-1">
-                              <span className="inline-block bg-gray-200 text-gray-900 font-bold text-xs px-2 py-1 rounded">{bet.type}</span>
-                              <span className={`font-bold text-lg ${bet.level === 'A' ? 'text-red-600' : 'text-blue-600'}`}>{bet.level}評価</span>
-                            </div>
-                            <div className="flex justify-between items-center">
+                          // ★ 修正：美しい横1列のレイアウトに戻しました
+                          <li key={index} className="flex justify-between items-center border-b border-gray-200 pb-2">
+                            <div className="flex items-center">
+                              <span className="inline-block bg-gray-200 text-gray-900 font-bold text-xs px-2 py-1 rounded mr-2">{bet.type}</span>
                               <span className="font-bold text-lg text-gray-900 tracking-widest">{bet.pattern}</span>
+                            </div>
+                            <div className="flex items-center gap-3">
                               {hitPayout ? (
-                                <span className="text-red-600 font-bold bg-red-100 px-2 py-1 rounded text-sm shadow-sm border border-red-200">🎯 {hitPayout}円</span>
+                                <span className="text-red-600 font-bold bg-red-100 px-2 py-1 rounded text-sm shadow-sm border border-red-200 whitespace-nowrap">🎯 {hitPayout}</span>
                               ) : raceResults ? (
-                                <span className="text-gray-400 text-sm font-bold">✖ ハズレ</span>
+                                <span className="text-gray-400 text-sm font-bold whitespace-nowrap">✖ ハズレ</span>
                               ) : null}
+                              <span className={`font-bold text-lg whitespace-nowrap ${bet.level === 'A' ? 'text-red-600' : 'text-blue-600'}`}>{bet.level}評価</span>
                             </div>
                           </li>
                         );

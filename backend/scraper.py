@@ -8,7 +8,6 @@ from database import SessionLocal, Race, RaceEntry
 
 def fetch_and_save_races(target_url: str):
     db = SessionLocal()
-    # スマホ版ページを返されないよう、PCのブラウザ情報を強力に指定
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
     target_url = target_url.replace("/result.html", "/shutuba.html")
@@ -73,7 +72,6 @@ def fetch_and_save_races(target_url: str):
             
             horse_url = horse_a.get("href", "")
             if horse_url and not horse_url.startswith("http"):
-                # URLが相対パスの場合は補完
                 if "db.netkeiba.com" not in horse_url:
                     horse_url = "https://db.netkeiba.com" + horse_url
             
@@ -91,40 +89,42 @@ def fetch_and_save_races(target_url: str):
             if horse_number == 0 or horse_number in seen_horse_numbers: continue
             seen_horse_numbers.add(horse_number)
                 
-            # ★バグ修正：性齢と斤量を正しく専用の場所(Barei)から取得する
+            # ★ 修正：性齢の「すぐ右隣」にある数字だけを斤量として正確に取得する
             sex_age = "不明"
             weight = "56.0"
-            barei_td = row.find(class_=re.compile(r"Barei", re.I))
-            if barei_td:
-                sa_match = re.search(r'([牡牝セ][2-9])', barei_td.text)
-                if sa_match: sex_age = sa_match.group(1)
-                
-                w_match = re.search(r'(\d{2}\.\d)', barei_td.text)
-                if w_match: weight = w_match.group(1)
-            else:
-                for td in row.find_all("td"):
-                    sa_match = re.search(r'([牡牝セ][2-9])', td.text)
-                    if sa_match: sex_age = sa_match.group(1)
-                    w_match = re.search(r'(\d{2}\.\d)', td.text)
-                    if w_match: weight = w_match.group(1)
+            td_elements = row.find_all("td")
+            for i, td in enumerate(td_elements):
+                txt = td.text.strip()
+                sa_match = re.search(r'([牡牝セ][2-9])', txt)
+                if sa_match:
+                    sex_age = sa_match.group(1)
+                    if i + 1 < len(td_elements):
+                        w_match = re.search(r'(\d{2}\.\d)', td_elements[i+1].text)
+                        if w_match:
+                            weight = w_match.group(1)
+                    break
 
             trainer = "不明"
             trainer_a = row.find("a", href=re.compile(r"trainer", re.I))
             if trainer_a: trainer = re.sub(r'\s+', '', trainer_a.text.strip())
                 
             is_cancel = False
-            for td in row.find_all("td"):
+            for td in td_elements:
                 if "取消" in td.text or "除外" in td.text:
                     is_cancel = True
                     break
 
-            # ★バグ修正：オッズを確実に取得する
+            # ★ 修正：オッズは後ろの方から探す＆斤量と同じ数値は無視する
             odds = 99.9
             if not is_cancel:
-                odds_td = row.find(class_=re.compile(r"Odds|Txt_R", re.I))
-                if odds_td:
-                    o = re.search(r'(\d+\.\d+)', odds_td.text)
-                    if o: odds = float(o.group(1))
+                for td in reversed(td_elements):
+                    txt = td.text.strip()
+                    o_match = re.search(r'^(\d+\.\d)$', txt)
+                    if o_match:
+                        # 万が一斤量と同じ数字だった場合はオッズとみなさない
+                        if o_match.group(1) != weight:
+                            odds = float(o_match.group(1))
+                            break
 
             new_entry = RaceEntry(
                 race_id=new_race.id, horse_number=horse_number,
@@ -140,7 +140,7 @@ def fetch_and_save_races(target_url: str):
         if netkeiba_id:
             past_url = f"https://nar.netkeiba.com/race/shutuba_past.html?race_id={netkeiba_id}"
             try:
-                p_res = requests.get(past_url, headers=headers, timeout=5)
+                p_res = requests.get(past_url, headers=headers, timeout=10)
                 p_res.encoding = p_res.apparent_encoding
                 p_soup = BeautifulSoup(p_res.text, "html.parser")
                 for row in p_soup.find_all("tr", class_=re.compile(r"HorseList")):
@@ -162,8 +162,9 @@ def fetch_and_save_races(target_url: str):
             if entry.horse_number in past_data_map:
                 entry.past_performance = past_data_map[entry.horse_number]
             elif hasattr(entry, '_horse_url') and entry._horse_url:
+                # ★ 修正：タイムアウトを10秒に伸ばし、取りこぼしを防ぐ
                 try:
-                    h_res = requests.get(entry._horse_url, headers=headers, timeout=5)
+                    h_res = requests.get(entry._horse_url, headers=headers, timeout=10)
                     h_res.encoding = h_res.apparent_encoding
                     h_soup = BeautifulSoup(h_res.text, "html.parser")
                     
@@ -174,11 +175,14 @@ def fetch_and_save_races(target_url: str):
                         for pr in p_rows[1:4]: # 直近3走
                             tds = pr.find_all("td")
                             if len(tds) >= 12:
-                                p_date = re.sub(r'^\d{4}/', '', tds[0].text.strip()) # 年を消して短くする
-                                p_name = tds[4].text.strip()
-                                p_pop = tds[10].text.strip()
-                                p_rank = tds[11].text.strip()
-                                past_texts.append(f"{p_date} {p_name} {p_pop}人気 {p_rank}着")
+                                try:
+                                    p_date = re.sub(r'^\d{4}/', '', tds[0].text.strip())
+                                    p_name = tds[4].text.strip()
+                                    p_pop = tds[10].text.strip()
+                                    p_rank = tds[11].text.strip()
+                                    past_texts.append(f"{p_date} {p_name} {p_pop}人気 {p_rank}着")
+                                except:
+                                    pass
                         if past_texts:
                             entry.past_performance = " / ".join(past_texts)
                     time.sleep(0.3)
@@ -199,7 +203,6 @@ def fetch_and_save_races(target_url: str):
         db.close()
 
 def fetch_and_save_result(race_id: int):
-    # (既存のコードそのまま)
     db = SessionLocal()
     try:
         race = db.query(Race).filter(Race.id == race_id).first()
