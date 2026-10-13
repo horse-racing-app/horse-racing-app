@@ -8,13 +8,14 @@ from database import SessionLocal, Race, RaceEntry
 
 def fetch_and_save_races(target_url: str):
     db = SessionLocal()
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
     target_url = target_url.replace("/result.html", "/shutuba.html")
 
     try:
         response = requests.get(target_url, headers=headers, timeout=10)
-        response.encoding = response.apparent_encoding 
+        # ★ 修正: netkeiba専用の文字コード(EUC-JP)を直接指定して、処理速度を爆速化
+        response.encoding = "euc-jp"
         soup = BeautifulSoup(response.text, "html.parser")
 
         netkeiba_id = None
@@ -85,7 +86,6 @@ def fetch_and_save_races(target_url: str):
                 if "jockey" in href: jockey = re.sub(r'[\s▲△☆◇★]', '', a.text.strip())
                 if "trainer" in href: trainer = re.sub(r'\s+', '', a.text.strip())
             
-            # 各マスのテキストを整理
             texts = [td.text.replace("\n", "").strip() for td in tds]
             
             horse_number = 0
@@ -95,7 +95,7 @@ def fetch_and_save_races(target_url: str):
                     nums_found.append(int(t))
             
             if len(nums_found) >= 2:
-                horse_number = nums_found[1] # 枠番の次が馬番
+                horse_number = nums_found[1] 
             elif len(nums_found) == 1:
                 horse_number = nums_found[0]
             
@@ -107,7 +107,6 @@ def fetch_and_save_races(target_url: str):
             odds = 99.9
             is_cancel = False
 
-            # 左側から「取消」「性齢」「斤量」を探す
             for t in texts:
                 if "取消" in t or "除外" in t:
                     is_cancel = True
@@ -116,18 +115,15 @@ def fetch_and_save_races(target_url: str):
                     sa_match = re.search(r'([牡牝セせん]+[1-9][0-9]?)', t)
                     if sa_match: sex_age = sa_match.group(1)
                 
-                # 40.0〜69.9の数字を斤量とみなす
                 if weight == "56.0":
-                    w_match = re.search(r'([4-6]\d\.\d)', t)
+                    w_match = re.search(r'([4-7]\d\.\d)', t)
                     if w_match: weight = w_match.group(1)
             
-            # 右側から「オッズ」だけを探す
             if not is_cancel:
                 for t in reversed(texts):
                     o_match = re.search(r'^(\d{1,4}\.\d)$', t)
                     if o_match:
                         val = float(o_match.group(1))
-                        # 斤量と全く同じ数字でない場合のみオッズとして採用
                         if str(val) != weight:
                             odds = val
                             break
@@ -144,61 +140,72 @@ def fetch_and_save_races(target_url: str):
         # ----------------近走成績の取得----------------
         past_data_map = {}
         if netkeiba_id:
-            past_url = f"https://nar.netkeiba.com/race/shutuba_past.html?race_id={netkeiba_id}"
+            past_url = target_url.replace("/shutuba.html", "/shutuba_past.html")
             try:
                 p_res = requests.get(past_url, headers=headers, timeout=10)
-                p_res.encoding = p_res.apparent_encoding
+                p_res.encoding = "euc-jp"
                 p_soup = BeautifulSoup(p_res.text, "html.parser")
                 
                 for row in p_soup.find_all("tr"):
-                    num_td = row.find(class_=re.compile(r"Umaban|Num", re.I))
-                    if num_td:
-                        nums = re.findall(r'\d+', num_td.text)
-                        if nums:
-                            h_num = int(nums[0])
-                            past_texts = []
-                            # 目印に頼らず「日付っぽい文字」があれば成績とみなす
-                            for past_td in row.find_all("td"):
-                                clean_text = re.sub(r'\s+', ' ', past_td.text).strip()
-                                if re.search(r'\d{4}[\./]\d{2}[\./]\d{2}', clean_text):
-                                    past_texts.append(clean_text[:40]) 
-                            if past_texts: 
-                                past_data_map[h_num] = " / ".join(past_texts[:3])
-            except:
-                pass
+                    tds = row.find_all(["td", "th"])
+                    if not tds: continue
+                    
+                    # 行内の最初のほうにある数字を馬番とする
+                    h_num = 0
+                    for td in tds[:3]:
+                        txt = td.text.strip()
+                        if txt.isdigit() and 1 <= int(txt) <= 18:
+                            h_num = int(txt)
+                            break
+                            
+                    if h_num > 0:
+                        past_texts = []
+                        for td in tds:
+                            clean_text = re.sub(r'\s+', ' ', td.text).strip()
+                            
+                            # ★最大のバグ修正: 「26.10.12」のように【年が2桁】のパターンでも確実に検知できるように変更
+                            if re.search(r'\d{2,4}[\./]\d{1,2}[\./]\d{1,2}', clean_text):
+                                past_texts.append(clean_text[:40]) 
+                                
+                        if past_texts: 
+                            past_data_map[h_num] = " / ".join(past_texts[:3])
+            except Exception as e:
+                print("過去ページ一括取得エラー:", e)
 
-        # 一括で取れなかった馬のみ個別アクセス
+        # 一括で取れなかった馬のみ個別アクセス（保険）
         for entry in entries_to_add:
             if entry.horse_number in past_data_map:
                 entry.past_performance = past_data_map[entry.horse_number]
             elif hasattr(entry, '_horse_url') and entry._horse_url:
                 try:
-                    h_res = requests.get(entry._horse_url, headers=headers, timeout=5)
-                    h_res.encoding = h_res.apparent_encoding
+                    h_res = requests.get(entry._horse_url, headers=headers, timeout=10)
+                    h_res.encoding = "euc-jp"
                     h_soup = BeautifulSoup(h_res.text, "html.parser")
                     
-                    prof_table = h_soup.find("table", class_=re.compile(r"db_h_race_results", re.I))
-                    if prof_table:
-                        p_rows = prof_table.find_all("tr")
-                        past_texts = []
-                        for pr in p_rows[1:4]:
-                            tds = pr.find_all("td")
-                            if len(tds) >= 12:
-                                try:
-                                    p_date = re.sub(r'^\d{4}/', '', tds[0].text.strip())
-                                    p_name = tds[4].text.strip()
-                                    p_pop = tds[10].text.strip()
-                                    p_rank = tds[11].text.strip()
-                                    past_texts.append(f"{p_date} {p_name} {p_pop}人気 {p_rank}着")
-                                except:
-                                    pass
-                        if past_texts:
-                            entry.past_performance = " / ".join(past_texts)
-                    time.sleep(0.5) 
-                except:
-                    pass
+                    past_texts = []
+                    # どんなテーブル構造でも、一番左が日付（YYYY/MM/DD）の行をレース結果とみなす最強抽出
+                    for tr in h_soup.find_all("tr"):
+                        tds = tr.find_all("td")
+                        if len(tds) >= 10:
+                            date_txt = tds[0].text.strip()
+                            if re.match(r'^\d{4}/\d{1,2}/\d{1,2}$', date_txt):
+                                p_date = re.sub(r'^\d{4}/', '', date_txt) # 年を消して短く
+                                p_name = tds[4].text.strip()
+                                p_pop = tds[10].text.strip()
+                                p_rank = tds[11].text.strip()
+                                
+                                if not p_rank: p_rank = "-"
+                                past_texts.append(f"{p_date} {p_name} {p_pop}人気 {p_rank}着")
+                        
+                        if len(past_texts) >= 3:
+                            break
 
-        # ★万が一取れなくてもエラーで落とさず保存する（古いデータを見せ続けないため）
+                    if past_texts:
+                        entry.past_performance = " / ".join(past_texts)
+                    time.sleep(0.5) 
+                except Exception as e:
+                    print("個別ページ取得エラー:", e)
+
         if not entries_to_add:
             return {"status": "error", "message": "出馬表データが見つかりませんでした。"}
 
@@ -213,7 +220,7 @@ def fetch_and_save_races(target_url: str):
         db.close()
 
 def fetch_and_save_result(race_id: int):
-    # (既存コードそのまま)
+    # (既存のコードそのまま)
     db = SessionLocal()
     try:
         race = db.query(Race).filter(Race.id == race_id).first()
@@ -223,7 +230,7 @@ def fetch_and_save_result(race_id: int):
         result_url = f"https://nar.netkeiba.com/race/result.html?race_id={race.netkeiba_id}"
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(result_url, headers=headers, timeout=10)
-        response.encoding = response.apparent_encoding
+        response.encoding = "euc-jp"
         soup = BeautifulSoup(response.text, "html.parser")
 
         payouts = {}
