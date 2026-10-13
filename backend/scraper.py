@@ -223,12 +223,18 @@ def fetch_and_save_result(race_id: int):
         result_url = f"https://nar.netkeiba.com/race/result.html?race_id={race.netkeiba_id}"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         response = requests.get(result_url, headers=headers, timeout=10)
-        # ★修正：content渡しに変更
-        soup = BeautifulSoup(response.content, "html.parser")
+        soup = BeautifulSoup(response.content, "html.parser", from_encoding=response.apparent_encoding)
 
         payouts = {}
         pay_table = soup.find("table", class_=re.compile(r"Pay_Table_C|Payout", re.I))
         rows = pay_table.find_all("tr") if pay_table else soup.find_all("tr")
+
+        # ★追加：馬番がタグでバラバラにならないように、改行(br)やリスト(li)だけを基準に分割する専用関数
+        def parse_cell(td):
+            h = str(td)
+            h = re.sub(r'<(br|li)[^>]*>', '|||', h, flags=re.IGNORECASE)
+            txt = BeautifulSoup(h, "html.parser").get_text(separator=" ")
+            return [x.strip() for x in txt.split('|||') if x.strip()]
 
         for tr in rows:
             th = tr.find("th")
@@ -238,8 +244,12 @@ def fetch_and_save_result(race_id: int):
             if type_name in ["単勝", "馬連", "ワイド", "3連複", "3連単"]:
                 tds = tr.find_all("td")
                 if len(tds) >= 2:
-                    nums = [re.sub(r'\D+', '-', s).strip('-') for s in tds[0].stripped_strings]
-                    moneys = [re.sub(r'[^\d,円]', '', s) for s in tds[1].stripped_strings]
+                    # 専用関数で安全に抽出
+                    nums_raw = parse_cell(tds[0])
+                    moneys_raw = parse_cell(tds[1])
+                    
+                    nums = [re.sub(r'\D+', '-', n).strip('-') for n in nums_raw]
+                    moneys = [re.sub(r'[^\d,円]', '', m) for m in moneys_raw]
                     
                     nums = [n for n in nums if n]
                     moneys = [m for m in moneys if m]
@@ -247,6 +257,7 @@ def fetch_and_save_result(race_id: int):
                     if type_name not in payouts:
                         payouts[type_name] = []
                     
+                    # 崩れることなく、馬番と配当を綺麗にペアにする
                     for n, m in zip(nums, moneys):
                         payouts[type_name].append({"pattern": n, "payout": m})
 
