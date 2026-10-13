@@ -220,7 +220,6 @@ def fetch_and_save_races(target_url: str):
         db.close()
 
 def fetch_and_save_result(race_id: int):
-    # (既存のコードそのまま)
     db = SessionLocal()
     try:
         race = db.query(Race).filter(Race.id == race_id).first()
@@ -228,13 +227,17 @@ def fetch_and_save_result(race_id: int):
             return {"status": "error", "message": "レースIDが不明です。出馬表を再取得してください。"}
 
         result_url = f"https://nar.netkeiba.com/race/result.html?race_id={race.netkeiba_id}"
-        headers = {"User-Agent": "Mozilla/5.0"}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         response = requests.get(result_url, headers=headers, timeout=10)
         response.encoding = "euc-jp"
         soup = BeautifulSoup(response.text, "html.parser")
 
         payouts = {}
-        for tr in soup.find_all("tr"):
+        # 結果の配当テーブル（Pay_Table_C）内の行だけを探すようにロックオン
+        pay_table = soup.find("table", class_=re.compile(r"Pay_Table_C|Payout", re.I))
+        rows = pay_table.find_all("tr") if pay_table else soup.find_all("tr")
+
+        for tr in rows:
             th = tr.find("th")
             if not th: continue
             type_name = th.text.strip()
@@ -242,12 +245,20 @@ def fetch_and_save_result(race_id: int):
             if type_name in ["単勝", "馬連", "ワイド", "3連複", "3連単"]:
                 tds = tr.find_all("td")
                 if len(tds) >= 2:
-                    num_str = re.sub(r'\D+', '-', tds[0].text.strip()).strip('-')
-                    money_str = re.sub(r'[^\d,円]', '', tds[1].text.strip())
+                    # ★修正：<br>や<li>ごとに区切って文字をバラバラに取り出す（ワイド等の複数行対策）
+                    nums = [re.sub(r'\D+', '-', s).strip('-') for s in tds[0].stripped_strings]
+                    moneys = [re.sub(r'[^\d,円]', '', s) for s in tds[1].stripped_strings]
+                    
+                    # 空っぽの文字を削除
+                    nums = [n for n in nums if n]
+                    moneys = [m for m in moneys if m]
                     
                     if type_name not in payouts:
                         payouts[type_name] = []
-                    payouts[type_name].append({"pattern": num_str, "payout": money_str})
+                    
+                    # 馬番と金額を順番にペアにして保存する
+                    for n, m in zip(nums, moneys):
+                        payouts[type_name].append({"pattern": n, "payout": m})
 
         if not payouts:
             return {"status": "error", "message": "レース結果がまだ公開されていないか、取得できませんでした。"}
