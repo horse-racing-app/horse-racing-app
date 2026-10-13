@@ -9,6 +9,9 @@ def fetch_and_save_races(target_url: str):
     db = SessionLocal()
     headers = {"User-Agent": "Mozilla/5.0"}
 
+    # ★改善1: 万が一「結果ページ(result.html)」のURLを入力しても、自動で出馬表URLに変換して取得する
+    target_url = target_url.replace("/result.html", "/shutuba.html")
+
     try:
         response = requests.get(target_url, headers=headers, timeout=10)
         response.encoding = response.apparent_encoding 
@@ -59,7 +62,12 @@ def fetch_and_save_races(target_url: str):
         entries_to_add = []
         seen_horse_numbers = set() 
 
-        for row in soup.find_all("tr"):
+        # ★改善2: ページ全体のtrではなく、「出馬表テーブル」の中のtrだけにロックオンする
+        # これにより、ページ下部の他レースの馬が混入してズレるバグを完全に防ぎます
+        race_table = soup.find("table", class_=re.compile(r"Shutuba_Table|RaceTable", re.I))
+        rows = race_table.find_all("tr") if race_table else soup.find_all("tr")
+
+        for row in rows:
             horse_a = row.find("a", href=re.compile(r"horse", re.I))
             if not horse_a: continue 
             horse_name = re.sub(r'\s+', '', horse_a.text.strip())
@@ -78,7 +86,6 @@ def fetch_and_save_races(target_url: str):
             if horse_number == 0 or horse_number in seen_horse_numbers: continue
             seen_horse_numbers.add(horse_number)
                 
-            # ★ 斤量の取得（より安全に）
             weight = "56.0"
             weight_td = row.find(class_=re.compile(r"Jindai|Weight", re.I))
             if weight_td:
@@ -100,27 +107,29 @@ def fetch_and_save_races(target_url: str):
             trainer_a = row.find("a", href=re.compile(r"trainer", re.I))
             if trainer_a: trainer = re.sub(r'\s+', '', trainer_a.text.strip())
                 
-            # ==========================================
-            # ★ 修正：オッズの取得（結果確定後のページにも対応）
-            # ==========================================
+            # ★改善3: 出走取消・除外の判定（これをやらないとオッズ取得時にズレる）
+            is_cancel = False
+            for td in row.find_all("td"):
+                if "取消" in td.text or "除外" in td.text:
+                    is_cancel = True
+                    break
+
             odds = 99.9
-            odds_td = row.find(class_=re.compile(r"Odds", re.I))
-            if odds_td:
-                o = re.search(r'(\d+\.\d+)', odds_td.text)
-                if o: odds = float(o.group(1))
-            
-            # クラス名で見つからなかった場合（すでに結果が出ているページなど）
-            # テーブルの後ろ（右側）からセルを確認し、斤量とは違う小数をオッズとして強制取得
-            if odds == 99.9:
-                for td in reversed(row.find_all("td")):
-                    txt = re.sub(r'\s+', '', td.text)
-                    o = re.search(r'(\d+\.\d+)', txt)
-                    if o:
-                        val = float(o.group(1))
-                        # 斤量と同じ数字を間違えて拾わないようにする
-                        if str(val) != weight:
-                            odds = val
-                            break
+            if not is_cancel:
+                odds_td = row.find(class_=re.compile(r"Odds", re.I))
+                if odds_td:
+                    o = re.search(r'(\d+\.\d+)', odds_td.text)
+                    if o: odds = float(o.group(1))
+                
+                if odds == 99.9:
+                    for td in reversed(row.find_all("td")):
+                        txt = re.sub(r'\s+', '', td.text)
+                        o = re.search(r'(\d+\.\d+)', txt)
+                        if o:
+                            val = float(o.group(1))
+                            if str(val) != weight:
+                                odds = val
+                                break
 
             new_entry = RaceEntry(
                 race_id=new_race.id, horse_number=horse_number,
@@ -130,7 +139,6 @@ def fetch_and_save_races(target_url: str):
             )
             entries_to_add.append(new_entry)
 
-        # 近走成績の取得
         if netkeiba_id:
             past_url = f"https://nar.netkeiba.com/race/shutuba_past.html?race_id={netkeiba_id}"
             try:
