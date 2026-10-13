@@ -36,15 +36,24 @@ export default function Home() {
     }
     setIsUpdating(true);
     try {
-      await fetch(`${API_BASE}/api/sync`, { 
+      const response = await fetch(`${API_BASE}/api/sync`, { 
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: targetUrl })
       });
+      const data = await response.json();
+      
+      // ★ 修正：エラーだった場合に画面にしっかり通知する
+      if (data.status === "error") {
+        alert("❌ 取得エラー: " + data.message);
+      } else {
+        alert("✅ 成功: " + data.message);
+        setTargetUrl("");
+      }
       loadData();
-      setTargetUrl("");
     } catch (error) {
-      console.error("更新エラー:", error);
+      console.error("通信エラー:", error);
+      alert("❌ サーバーとの通信に失敗しました。Renderが起動するまで数十秒お待ちください。");
     }
     setIsUpdating(false);
   };
@@ -54,9 +63,7 @@ export default function Home() {
       <main className="max-w-7xl mx-auto">
         <h1 className="text-3xl font-bold text-gray-900 mb-8">地方競馬予想支援システム</h1>
         
-        {/* PCでは横並び、スマホでは縦並びになるシンプルなレイアウト（元通り） */}
         <div className="flex flex-col lg:flex-row gap-8">
-          
           <div className="flex-1">
             <div className="bg-white rounded-lg shadow p-6 mb-8 border-t-4 border-blue-600">
               <h2 className="text-lg font-bold mb-4 text-gray-900">新規レースデータの取得</h2>
