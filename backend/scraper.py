@@ -3,13 +3,13 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 import re
 import json
+import time
 from database import SessionLocal, Race, RaceEntry
 
 def fetch_and_save_races(target_url: str):
     db = SessionLocal()
     headers = {"User-Agent": "Mozilla/5.0"}
 
-    # ★改善1: 万が一「結果ページ(result.html)」のURLを入力しても、自動で出馬表URLに変換して取得する
     target_url = target_url.replace("/result.html", "/shutuba.html")
 
     try:
@@ -62,8 +62,6 @@ def fetch_and_save_races(target_url: str):
         entries_to_add = []
         seen_horse_numbers = set() 
 
-        # ★改善2: ページ全体のtrではなく、「出馬表テーブル」の中のtrだけにロックオンする
-        # これにより、ページ下部の他レースの馬が混入してズレるバグを完全に防ぎます
         race_table = soup.find("table", class_=re.compile(r"Shutuba_Table|RaceTable", re.I))
         rows = race_table.find_all("tr") if race_table else soup.find_all("tr")
 
@@ -71,6 +69,11 @@ def fetch_and_save_races(target_url: str):
             horse_a = row.find("a", href=re.compile(r"horse", re.I))
             if not horse_a: continue 
             horse_name = re.sub(r'\s+', '', horse_a.text.strip())
+            
+            # ★ 改善ポイント：馬の個別ページURLを取得しておく
+            horse_url = horse_a.get("href", "")
+            if horse_url.startswith("/"):
+                horse_url = "https://nar.netkeiba.com" + horse_url
             
             jockey = "不明"
             jockey_a = row.find("a", href=re.compile(r"jockey", re.I))
@@ -107,7 +110,6 @@ def fetch_and_save_races(target_url: str):
             trainer_a = row.find("a", href=re.compile(r"trainer", re.I))
             if trainer_a: trainer = re.sub(r'\s+', '', trainer_a.text.strip())
                 
-            # ★改善3: 出走取消・除外の判定（これをやらないとオッズ取得時にズレる）
             is_cancel = False
             for td in row.find_all("td"):
                 if "取消" in td.text or "除外" in td.text:
@@ -137,16 +139,22 @@ def fetch_and_save_races(target_url: str):
                 weight=weight, odds=odds,
                 sex_age=sex_age, trainer=trainer 
             )
+            # 後で個別ページへアクセスできるようにURLを一時的に持たせておく
+            new_entry._horse_url = horse_url
             entries_to_add.append(new_entry)
 
+        # ---------------------------------------------------------
+        # ★ 改善ポイント：近走成績の取得（二段構え）
+        # ---------------------------------------------------------
+        past_data_map = {}
+        # 1. まずは従来通り「一括ページ」から取得を試みる
         if netkeiba_id:
             past_url = f"https://nar.netkeiba.com/race/shutuba_past.html?race_id={netkeiba_id}"
             try:
-                p_res = requests.get(past_url, headers=headers, timeout=10)
+                p_res = requests.get(past_url, headers=headers, timeout=5)
                 p_res.encoding = p_res.apparent_encoding
                 p_soup = BeautifulSoup(p_res.text, "html.parser")
                 
-                past_data_map = {}
                 for row in p_soup.find_all("tr", class_=re.compile(r"HorseList")):
                     num_td = row.find(class_=re.compile(r"Umaban|Num"))
                     if num_td:
@@ -158,13 +166,43 @@ def fetch_and_save_races(target_url: str):
                                 clean_text = re.sub(r'\s+', ' ', past_td.text).strip()
                                 if clean_text and len(clean_text) > 5:
                                     past_texts.append(clean_text[:40]) 
-                            past_data_map[h_num] = " / ".join(past_texts[:3])
-                
-                for entry in entries_to_add:
-                    if entry.horse_number in past_data_map:
-                        entry.past_performance = past_data_map[entry.horse_number]
+                            if past_texts:
+                                past_data_map[h_num] = " / ".join(past_texts[:3])
             except Exception as e:
-                print(f"前走データの取得エラー: {e}")
+                print(f"前走データの一括取得エラー: {e}")
+
+        # 2. データを各馬に割り当て＆取れなかった場合の「個別ページ取得」
+        for entry in entries_to_add:
+            if entry.horse_number in past_data_map:
+                entry.past_performance = past_data_map[entry.horse_number]
+            elif hasattr(entry, '_horse_url') and entry._horse_url:
+                # 一括ページになかった場合（過去のレースなど）は、個別の馬ページから取得する
+                try:
+                    h_res = requests.get(entry._horse_url, headers=headers, timeout=5)
+                    h_res.encoding = h_res.apparent_encoding
+                    h_soup = BeautifulSoup(h_res.text, "html.parser")
+                    
+                    # 競走成績のテーブルを探す
+                    prof_table = h_soup.find("table", class_=re.compile(r"db_h_race_results", re.I))
+                    if prof_table:
+                        p_rows = prof_table.find_all("tr")
+                        past_texts = []
+                        # 最初の数レースを取得（最初の行はヘッダーなのでスライスで除外）
+                        for pr in p_rows[1:4]: # 直近3走
+                            tds = pr.find_all("td")
+                            if len(tds) > 11:
+                                p_date = tds[0].text.strip() # 日付
+                                p_name = tds[4].text.strip() # レース名
+                                p_pop = tds[10].text.strip() # 人気
+                                p_rank = tds[11].text.strip() # 着順
+                                # 例: "2023/10/01 〇〇賞 2番人気 1着"
+                                clean_text = f"{p_date} {p_name} {p_pop}番人気 {p_rank}着"
+                                past_texts.append(clean_text)
+                        if past_texts:
+                            entry.past_performance = " / ".join(past_texts)
+                    time.sleep(0.3) # netkeibaサーバーに負荷をかけないよう少し待つ
+                except Exception as e:
+                    print(f"馬個別ページの取得エラー: {e}")
 
         if not entries_to_add:
             raise ValueError("出馬表のデータが抽出できませんでした。")
