@@ -16,9 +16,9 @@ app = FastAPI(title="地方競馬予想支援システム API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # "*" はすべてのドメインからのアクセスを許可します
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # GETやPOSTなどをすべて許可
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 

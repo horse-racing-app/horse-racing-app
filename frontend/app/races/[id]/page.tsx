@@ -23,13 +23,13 @@ function RaceDetailContent() {
   const [isFetchingResult, setIsFetchingResult] = useState(false);
 
   const hasFetchedPredictions = useRef(false);
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8080";
 
   const fetchPredictions = async (targetId: string, isForce = false) => {
     setIsPredicting(true);
     try {
       const forceParam = isForce ? "?force=true" : "";
-      const res = await fetch(`${API_BASE}/api/races/${targetId}/predictions${forceParam}`);
+      // API_BASEを使わず、相対パスに変更
+      const res = await fetch(`/api/races/${targetId}/predictions${forceParam}`);
       const data = await res.json();
       setPredictions(data);
     } catch (error) {
@@ -42,7 +42,7 @@ function RaceDetailContent() {
     if (!raceId) return;
     setIsFetchingResult(true);
     try {
-      const res = await fetch(`${API_BASE}/api/races/${raceId}/results`, { method: "POST" });
+      const res = await fetch(`/api/races/${raceId}/results`, { method: "POST" });
       const data = await res.json();
       if (data.status === "success") {
         setRaceResults(data.data);
@@ -60,9 +60,9 @@ function RaceDetailContent() {
     if (!raceId) return;
 
     Promise.all([
-      fetch(`${API_BASE}/api/races/${raceId}`).then((res) => res.json()),
-      fetch(`${API_BASE}/api/races/${raceId}/entries`).then((res) => res.json()),
-      fetch(`${API_BASE}/api/races/${raceId}/results`).then((res) => res.json())
+      fetch(`/api/races/${raceId}`).then((res) => res.json()),
+      fetch(`/api/races/${raceId}/entries`).then((res) => res.json()),
+      fetch(`/api/races/${raceId}/results`).then((res) => res.json())
     ]).then(([raceData, entriesData, resultsData]) => {
         setRace(raceData);
         setEntries(entriesData);
@@ -138,7 +138,6 @@ function RaceDetailContent() {
             <div className="xl:col-span-2 bg-white rounded-lg shadow overflow-hidden">
               <div className="bg-gray-800 text-white p-3 sm:p-4"><h2 className="font-bold text-base sm:text-lg">出馬表</h2></div>
               
-              {/* ★ テーブルを横スクロール可能にするラッパー */}
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[800px] text-left border-collapse bg-white">
                   <thead>

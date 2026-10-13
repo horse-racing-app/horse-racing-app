@@ -11,15 +11,14 @@ export default function Home() {
   const [isUpdating, setIsUpdating] = useState(false);
   const [targetUrl, setTargetUrl] = useState("");
 
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8080";
-
   const loadData = () => {
-    fetch(`${API_BASE}/api/races`, { cache: "no-store" })
+    // API_BASEを使わず、相対パスに変更
+    fetch("/api/races", { cache: "no-store" })
       .then((res) => res.json())
       .then((data) => setRaces(data))
       .catch((error) => console.error("データ取得エラー:", error));
 
-    fetch(`${API_BASE}/api/stats`, { cache: "no-store" })
+    fetch("/api/stats", { cache: "no-store" })
       .then((res) => res.json())
       .then((data) => setStats(data))
       .catch((error) => console.error("集計データ取得エラー:", error));
@@ -36,7 +35,7 @@ export default function Home() {
     }
     setIsUpdating(true);
     try {
-      await fetch(`${API_BASE}/api/sync`, { 
+      await fetch("/api/sync", { 
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: targetUrl })
@@ -56,11 +55,9 @@ export default function Home() {
         
         <div className="flex flex-col lg:flex-row gap-6 sm:gap-8">
           
-          {/* 左側：メインエリア */}
           <div className="flex-1">
             <div className="bg-white rounded-lg shadow p-4 sm:p-6 mb-6 sm:mb-8 border-t-4 border-blue-600">
               <h2 className="text-lg font-bold mb-4 text-gray-900">新規レースデータの取得</h2>
-              {/* スマホでは縦並び、PC(sm以上)では横並びになるように flex-col sm:flex-row を設定 */}
               <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
                 <input 
                   type="text" 
@@ -105,7 +102,6 @@ export default function Home() {
             </div>
           </div>
 
-          {/* 右側：サイドバー（成績集計ダッシュボード） */}
           {stats && (stats.total_races > 0 || stats.debug?.length > 0) && (
             <div className="lg:w-80 flex-shrink-0">
               {stats.total_races === 0 ? (
