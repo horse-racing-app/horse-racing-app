@@ -9,26 +9,22 @@ from database import SessionLocal, Race, RaceEntry
 def fetch_and_save_races(target_url: str):
     db = SessionLocal()
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-
     target_url = target_url.replace("/result.html", "/shutuba.html")
 
     try:
         response = requests.get(target_url, headers=headers, timeout=10)
-        # ★修正：文字コード指定を一切やめ、生データ(content)を直接渡してBS4に完璧な自動判別をさせる
-        soup = BeautifulSoup(response.content, "html.parser")
+        soup = BeautifulSoup(response.content, "html.parser", from_encoding=response.apparent_encoding)
 
         netkeiba_id = None
         id_match = re.search(r'race_id=(\d+)', target_url)
-        if id_match:
-            netkeiba_id = id_match.group(1)
+        if id_match: netkeiba_id = id_match.group(1)
 
         title_text = soup.title.text if soup.title else ""
         date_match = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', title_text)
         if date_match: race_date = f"{date_match.group(1)}-{int(date_match.group(2)):02d}-{int(date_match.group(3)):02d}"
         else: race_date = datetime.now().strftime("%Y-%m-%d")
 
-        course = "不明"
-        race_number = 1
+        course = "不明"; race_number = 1
         course_match = re.search(r'([一-龥]+)(\d+)R', title_text)
         if course_match:
             course = course_match.group(1)
@@ -44,24 +40,17 @@ def fetch_and_save_races(target_url: str):
             distance_match = re.search(r'(\d+)m', race_data_elem.text)
             if distance_match: distance = int(distance_match.group(1))
 
-        existing_race = db.query(Race).filter(
-            Race.date == race_date, Race.course == course, Race.race_number == race_number
-        ).first()
+        existing_race = db.query(Race).filter(Race.date == race_date, Race.course == course, Race.race_number == race_number).first()
         if existing_race:
             db.delete(existing_race)
             db.flush()
 
-        new_race = Race(
-            netkeiba_id=netkeiba_id,
-            date=race_date, course=course, race_number=race_number, 
-            name=race_name, distance=distance, condition="良" 
-        )
+        new_race = Race(netkeiba_id=netkeiba_id, date=race_date, course=course, race_number=race_number, name=race_name, distance=distance, condition="良")
         db.add(new_race)
         db.flush() 
 
         entries_to_add = []
         seen_horse_numbers = set() 
-
         race_table = soup.find("table", class_=re.compile(r"Shutuba_Table|RaceTable", re.I))
         rows = race_table.find_all("tr") if race_table else soup.find_all("tr")
 
@@ -75,98 +64,71 @@ def fetch_and_save_races(target_url: str):
             
             horse_url = horse_a.get("href", "")
             if horse_url and not horse_url.startswith("http"):
-                if "db.netkeiba.com" not in horse_url:
-                    horse_url = "https://db.netkeiba.com" + horse_url
+                if "db.netkeiba.com" not in horse_url: horse_url = "https://db.netkeiba.com" + horse_url
             
-            jockey = "不明"
-            trainer = "不明"
+            jockey = "不明"; trainer = "不明"
             for a in row.find_all("a"):
                 href = a.get("href", "")
                 if "jockey" in href: jockey = re.sub(r'[\s▲△☆◇★]', '', a.text.strip())
                 if "trainer" in href: trainer = re.sub(r'\s+', '', a.text.strip())
             
             texts = [td.text.replace("\n", "").strip() for td in tds]
-            
             horse_number = 0
-            nums_found = []
-            for t in texts:
-                if re.match(r'^[0-9]+$', t):
-                    nums_found.append(int(t))
-            
-            if len(nums_found) >= 2:
-                horse_number = nums_found[1] 
-            elif len(nums_found) == 1:
-                horse_number = nums_found[0]
+            nums_found = [int(t) for t in texts if re.match(r'^[0-9]+$', t)]
+            if len(nums_found) >= 2: horse_number = nums_found[1] 
+            elif len(nums_found) == 1: horse_number = nums_found[0]
             
             if horse_number == 0 or horse_number in seen_horse_numbers: continue
             seen_horse_numbers.add(horse_number)
                 
-            sex_age = "不明"
-            weight = "56.0"
-            odds = 99.9
-            is_cancel = False
+            sex_age = "不明"; weight = "56.0"; odds = 99.9; is_cancel = False
 
+            # ★ 修正: 全テキストから「小数」だけをリストアップし、数字の大きさで斤量とオッズを絶対的に区別する
+            decimals = []
             for t in texts:
-                if "取消" in t or "除外" in t:
-                    is_cancel = True
-                
+                if "取消" in t or "除外" in t: is_cancel = True
                 if sex_age == "不明":
                     sa_match = re.search(r'([牡牝セせん]+[1-9][0-9]?)', t)
                     if sa_match: sex_age = sa_match.group(1)
                 
-                if weight == "56.0":
-                    w_match = re.search(r'([4-7]\d\.\d)', t)
-                    if w_match: weight = w_match.group(1)
-            
-            if not is_cancel:
-                for t in reversed(texts):
-                    o_match = re.search(r'^(\d{1,4}\.\d)$', t)
-                    if o_match:
-                        val = float(o_match.group(1))
-                        if str(val) != weight:
-                            odds = val
-                            break
+                # 小数（例：54.0, 1.4, 203.5）をすべて抽出
+                d_match = re.search(r'^(\d{1,4}\.\d)$', t)
+                if d_match: decimals.append(float(d_match.group(1)))
 
-            new_entry = RaceEntry(
-                race_id=new_race.id, horse_number=horse_number,
-                horse_name=horse_name, jockey=jockey,
-                weight=weight, odds=odds,
-                sex_age=sex_age, trainer=trainer 
-            )
+            # 小数のリストを判定
+            for val in decimals:
+                # 40.0 〜 69.9 は斤量とみなす（斤量が複数ある場合は最初のものを採用）
+                if 40.0 <= val < 70.0 and weight == "56.0":
+                    weight = str(val)
+                # それ以外（あるいはすでに斤量が見つかっている場合の余った数字）をオッズとみなす
+                elif not is_cancel and val != float(weight):
+                    odds = val
+
+            new_entry = RaceEntry(race_id=new_race.id, horse_number=horse_number, horse_name=horse_name, jockey=jockey, weight=weight, odds=odds, sex_age=sex_age, trainer=trainer)
             new_entry._horse_url = horse_url
             entries_to_add.append(new_entry)
 
-        # ----------------近走成績の取得----------------
         past_data_map = {}
         if netkeiba_id:
             past_url = target_url.replace("/shutuba.html", "/shutuba_past.html")
             try:
                 p_res = requests.get(past_url, headers=headers, timeout=10)
-                # ★修正：content渡しに変更
-                p_soup = BeautifulSoup(p_res.content, "html.parser")
-                
+                p_soup = BeautifulSoup(p_res.content, "html.parser", from_encoding=p_res.apparent_encoding)
                 for row in p_soup.find_all("tr"):
                     tds = row.find_all(["td", "th"])
                     if not tds: continue
-                    
                     h_num = 0
                     for td in tds[:3]:
                         txt = td.text.strip()
                         if txt.isdigit() and 1 <= int(txt) <= 18:
-                            h_num = int(txt)
-                            break
-                            
+                            h_num = int(txt); break
                     if h_num > 0:
                         past_texts = []
                         for td in tds:
                             clean_text = re.sub(r'\s+', ' ', td.text).strip()
-                            if re.search(r'\d{2,4}[\./]\d{1,2}[\./]\d{1,2}', clean_text):
-                                past_texts.append(clean_text[:40]) 
-                                
-                        if past_texts: 
-                            past_data_map[h_num] = " / ".join(past_texts[:3])
-            except Exception as e:
-                print("過去ページ一括取得エラー:", e)
+                            if re.search(r'\d{2,4}[\./]\d{1,2}[\./]\d{1,2}', clean_text): past_texts.append(clean_text[:40]) 
+                        if past_texts: past_data_map[h_num] = " / ".join(past_texts[:3])
+            except: pass
 
         for entry in entries_to_add:
             if entry.horse_number in past_data_map:
@@ -174,9 +136,7 @@ def fetch_and_save_races(target_url: str):
             elif hasattr(entry, '_horse_url') and entry._horse_url:
                 try:
                     h_res = requests.get(entry._horse_url, headers=headers, timeout=10)
-                    # ★修正：content渡しに変更
-                    h_soup = BeautifulSoup(h_res.content, "html.parser")
-                    
+                    h_soup = BeautifulSoup(h_res.content, "html.parser", from_encoding=h_res.apparent_encoding)
                     past_texts = []
                     for tr in h_soup.find_all("tr"):
                         tds = tr.find_all("td")
@@ -187,33 +147,24 @@ def fetch_and_save_races(target_url: str):
                                 p_name = tds[4].text.strip()
                                 p_pop = tds[10].text.strip()
                                 p_rank = tds[11].text.strip()
-                                
                                 if not p_rank: p_rank = "-"
                                 past_texts.append(f"{p_date} {p_name} {p_pop}人気 {p_rank}着")
-                        
-                        if len(past_texts) >= 3:
-                            break
-
-                    if past_texts:
-                        entry.past_performance = " / ".join(past_texts)
+                        if len(past_texts) >= 3: break
+                    if past_texts: entry.past_performance = " / ".join(past_texts)
                     time.sleep(0.5) 
-                except Exception as e:
-                    print("個別ページ取得エラー:", e)
+                except: pass
 
-        if not entries_to_add:
-            return {"status": "error", "message": "出馬表データが見つかりませんでした。"}
-
+        if not entries_to_add: return {"status": "error", "message": "出馬表データが見つかりませんでした。"}
         db.add_all(entries_to_add)
         db.commit() 
         return {"status": "success", "message": f"{course}{race_number}R「{race_name}」を取得しました！"}
-
     except Exception as e:
         db.rollback() 
         return {"status": "error", "message": f"エラー: {str(e)}"}
     finally:
         db.close()
 
-def fetch_and_save_result(race_id: int):
+def fetch_and_save_result(race_id: int, force=True):
     db = SessionLocal()
     try:
         race = db.query(Race).filter(Race.id == race_id).first()
@@ -229,13 +180,6 @@ def fetch_and_save_result(race_id: int):
         pay_table = soup.find("table", class_=re.compile(r"Pay_Table_C|Payout", re.I))
         rows = pay_table.find_all("tr") if pay_table else soup.find_all("tr")
 
-        # ★追加：馬番がタグでバラバラにならないように、改行(br)やリスト(li)だけを基準に分割する専用関数
-        def parse_cell(td):
-            h = str(td)
-            h = re.sub(r'<(br|li)[^>]*>', '|||', h, flags=re.IGNORECASE)
-            txt = BeautifulSoup(h, "html.parser").get_text(separator=" ")
-            return [x.strip() for x in txt.split('|||') if x.strip()]
-
         for tr in rows:
             th = tr.find("th")
             if not th: continue
@@ -244,9 +188,21 @@ def fetch_and_save_result(race_id: int):
             if type_name in ["単勝", "馬連", "ワイド", "3連複", "3連単"]:
                 tds = tr.find_all("td")
                 if len(tds) >= 2:
-                    # 専用関数で安全に抽出
-                    nums_raw = parse_cell(tds[0])
-                    moneys_raw = parse_cell(tds[1])
+                    # ★修正：生HTMLを直接文字列操作して、完璧に区切る
+                    html0 = str(tds[0])
+                    html1 = str(tds[1])
+                    
+                    # 改行やリストを安全な区切り文字に変換
+                    html0 = re.sub(r'<(br|li|div)[^>]*>', '|||', html0, flags=re.IGNORECASE)
+                    html1 = re.sub(r'<(br|li|div)[^>]*>', '|||', html1, flags=re.IGNORECASE)
+                    
+                    # タグを除去
+                    text0 = BeautifulSoup(html0, "html.parser").get_text()
+                    text1 = BeautifulSoup(html1, "html.parser").get_text()
+                    
+                    # 区切り文字でリスト化
+                    nums_raw = text0.split('|||')
+                    moneys_raw = text1.split('|||')
                     
                     nums = [re.sub(r'\D+', '-', n).strip('-') for n in nums_raw]
                     moneys = [re.sub(r'[^\d,円]', '', m) for m in moneys_raw]
@@ -257,13 +213,13 @@ def fetch_and_save_result(race_id: int):
                     if type_name not in payouts:
                         payouts[type_name] = []
                     
-                    # 崩れることなく、馬番と配当を綺麗にペアにする
                     for n, m in zip(nums, moneys):
                         payouts[type_name].append({"pattern": n, "payout": m})
 
         if not payouts:
             return {"status": "error", "message": "レース結果がまだ公開されていないか、取得できませんでした。"}
 
+        # 結果を常に上書き保存する
         race.result_json = json.dumps(payouts, ensure_ascii=False)
         db.commit()
         return {"status": "success", "message": "レース結果と配当を取得しました！", "data": payouts}

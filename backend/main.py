@@ -99,9 +99,8 @@ def get_predictions(race_id: int, model: str = "gemini-3.8-flash", force: bool =
     return predictions_result
 
 @app.post("/api/races/{race_id}/results")
-def sync_race_results(race_id: int):
-    from scraper import fetch_and_save_result
-    return fetch_and_save_result(race_id)
+def sync_results(race_id: int, force: bool = False):
+    return fetch_and_save_result(race_id, force=force)
 
 @app.get("/api/races/{race_id}/results")
 def get_race_results(race_id: int, db: Session = Depends(get_db)):

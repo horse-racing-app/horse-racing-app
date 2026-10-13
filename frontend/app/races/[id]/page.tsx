@@ -43,7 +43,7 @@ function RaceDetailContent() {
     if (!raceId) return;
     setIsFetchingResult(true);
     try {
-      const res = await fetch(`${API_BASE}/api/races/${raceId}/results`, { method: "POST" });
+      const res = await fetch(`${API_BASE}/api/races/${raceId}/results?force=true`, { method: "POST" });
       const data = await res.json();
       if (data.status === "success") {
         setRaceResults(data.data);
