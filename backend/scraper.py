@@ -14,9 +14,8 @@ def fetch_and_save_races(target_url: str):
 
     try:
         response = requests.get(target_url, headers=headers, timeout=10)
-        # ★ 修正: netkeiba専用の文字コード(EUC-JP)を直接指定して、処理速度を爆速化
-        response.encoding = "euc-jp"
-        soup = BeautifulSoup(response.text, "html.parser")
+        # サイトの文字コードを自動判別して取得（文字化け完全防止）
+        soup = BeautifulSoup(response.content, "html.parser", from_encoding=response.apparent_encoding)
 
         netkeiba_id = None
         id_match = re.search(r'race_id=(\d+)', target_url)
@@ -143,8 +142,7 @@ def fetch_and_save_races(target_url: str):
             past_url = target_url.replace("/shutuba.html", "/shutuba_past.html")
             try:
                 p_res = requests.get(past_url, headers=headers, timeout=10)
-                p_res.encoding = "euc-jp"
-                p_soup = BeautifulSoup(p_res.text, "html.parser")
+                p_soup = BeautifulSoup(p_res.content, "html.parser", from_encoding=p_res.apparent_encoding)
                 
                 for row in p_soup.find_all("tr"):
                     tds = row.find_all(["td", "th"])
@@ -229,8 +227,7 @@ def fetch_and_save_result(race_id: int):
         result_url = f"https://nar.netkeiba.com/race/result.html?race_id={race.netkeiba_id}"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         response = requests.get(result_url, headers=headers, timeout=10)
-        response.encoding = "euc-jp"
-        soup = BeautifulSoup(response.text, "html.parser")
+        soup = BeautifulSoup(response.content, "html.parser", from_encoding=response.apparent_encoding)
 
         payouts = {}
         # 結果の配当テーブル（Pay_Table_C）内の行だけを探すようにロックオン
