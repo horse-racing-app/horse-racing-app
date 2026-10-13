@@ -164,7 +164,9 @@ function RaceDetailContent() {
                         <td className="p-3 text-sm text-gray-600 font-medium">{entry.weight}</td>
                         <td className="p-3 text-sm text-gray-900 font-medium">{entry.jockey}</td>
                         <td className="p-3 text-sm text-gray-600 font-medium">{entry.trainer}</td>
-                        <td className="p-3 text-right text-sm text-gray-900 font-bold">{entry.odds.toFixed(1)}</td>
+                        <td className="p-3 text-right text-sm text-gray-900 font-bold">
+                          {entry.odds === 99.9 || entry.odds === 0 ? "---" : entry.odds.toFixed(1)}
+                        </td>
                         <td className="p-3 text-xs text-gray-500 max-w-[250px] truncate" title={entry.past_performance}>{entry.past_performance || "-"}</td>
                       </tr>
                     ))}
